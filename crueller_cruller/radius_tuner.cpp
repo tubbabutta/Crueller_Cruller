@@ -23,6 +23,7 @@ void RadiusTuner::begin() {
   lastRadiusFlash = 0;
 }
 
+// WORKING CODE - Real-time radius adjustment (0.1mm steps) - DO NOT MODIFY
 bool RadiusTuner::processStickInput(int16_t stickX) {
   if (abs(stickX) > STICK_DEADZONE && (millis() - lastRadiusUpdate > UPDATE_INTERVAL_MS)) {
     lastRadiusUpdate = millis();

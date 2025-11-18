@@ -161,7 +161,7 @@ void onDisconnectedController(ControllerPtr ctl) {
     myController = nullptr;
     controllerConnected = false;
     leds.setColor(LED_COLOR_DISCONNECTED);
-    setESCDShot(0);
+    setESCThrottle(0);
     
     // Re-enable scanning for new controllers when disconnected
     BP32.enableNewBluetoothConnections(true);
@@ -180,17 +180,24 @@ void setup() {
   // Initialize LEDs
   leds.begin();
   
-  // Initialize ESC DShot (must be done before LED blink to ensure continuous arming signal)
-  Serial.println("Initializing ESC DShot600...");
-  escMotor.begin(DSHOT600);
-  Serial.println("ESC DShot600 initialized - starting arming sequence...");
-  
-  // ESC arming: Send 0 commands for 2 seconds (delay acceptable during startup)
-  for (int i = 0; i < ESC_STARTUP_MILLISECONDS; i++) {
-    setESCDShot(0);  // Send 0 command
-    delay(1);  // 1ms delay between commands
-  }
-  Serial.println("ESC arming sequence complete - ESC should be armed");
+  // Initialize ESC (protocol selected in esc.h)
+  #if USE_DSHOT
+    Serial.println("Initializing ESC DShot600...");
+    initESC();
+    Serial.println("ESC DShot600 initialized - starting arming sequence...");
+    
+    // DShot arming: Send 0 commands for 2 seconds
+    // Pattern from working ESP8266 robot: 2 seconds of 0 commands with delay(1)
+    for (int i = 0; i < ESC_STARTUP_MILLISECONDS; i++) {
+      setESCThrottle(0);
+      delay(1);  // 1ms delay - acceptable during startup
+    }
+    Serial.println("ESC arming sequence complete - ESC should be armed");
+  #else
+    Serial.println("Initializing ESC PWM...");
+    initESC();
+    Serial.println("ESC PWM initialized - ESC should be armed");
+  #endif
   
   // Initialize radius tuner
   radiusTuner.begin();
@@ -202,7 +209,7 @@ void setup() {
   while (millis() - startupStart < 3000) {
     blinkState = !blinkState;
     leds.setColor(blinkState ? LED_COLOR_DISCONNECTED : LED_COLOR_OFF);
-    setESCDShot(0);  // Keep sending ESC signal during startup
+    setESCThrottle(0);  // Keep sending ESC signal during startup
     delay(250);
   }
   leds.setColor(LED_COLOR_DISCONNECTED);
@@ -303,7 +310,7 @@ void loop() {
   
   if (disconnected) {
     leds.setColor(LED_COLOR_DISCONNECTED);
-    setESCDShot(0);  // Keep sending 0 commands to keep ESC armed
+    setESCThrottle(0);  // Keep ESC armed
     return;
   }
   
@@ -312,7 +319,7 @@ void loop() {
     spin_one_rotation();
   } else {
     // Idle mode - keep ESC armed and update LED
-    setESCDShot(0);  // Continuous 0 commands keep ESC armed
+    setESCThrottle(0);  // Continuous commands keep ESC armed
     static unsigned long lastLEDUpdate = 0;
     if (millis() - lastLEDUpdate > 100) {
       if (configMode && !showCalibrationFlash) {
@@ -574,7 +581,10 @@ struct melty_parameters_t getMeltyParameters() {
     params.max_throttle_offset = 0;
   }
   
-  // Calculate LED POV timing (window size varies with RPM)
+  // ========================================================================
+  // WORKING CODE - POV LED TIMING CALCULATION - DO NOT MODIFY
+  // This code produces stable POV LED that can be tuned with radius adjustment
+  // ========================================================================
   float led_on_portion = current_rpm / MAX_TRACKING_RPM;
   if (led_on_portion < 0.10f) led_on_portion = 0.10f;
   if (led_on_portion > 0.90f) led_on_portion = 0.90f;
@@ -590,12 +600,14 @@ struct melty_parameters_t getMeltyParameters() {
   
   params.led_start_us = (unsigned long)led_start;
   params.led_stop_us = (unsigned long)led_stop;
+  // ========================================================================
   
   return params;
 }
 
 /**
  * Update LED for POV effect - blinks at fixed position in rotation
+ * WORKING CODE - DO NOT MODIFY - This produces stable POV LED
  */
 void updateHeadingLED(struct melty_parameters_t* params, unsigned long time_spent_us) {
   bool meltybrain_active = (current_rpm >= MELTYBRAIN_RPM_THRESHOLD && 
@@ -607,7 +619,7 @@ void updateHeadingLED(struct melty_parameters_t* params, unsigned long time_spen
     return;
   }
   
-  // Check if in LED window for POV
+  // WORKING: POV window detection (handles wrap-around correctly)
   bool led_on;
   if (params->led_start_us > params->led_stop_us) {
     led_on = (time_spent_us >= params->led_start_us) || (time_spent_us <= params->led_stop_us);
@@ -628,12 +640,12 @@ void updateHeadingLED(struct melty_parameters_t* params, unsigned long time_spen
  */
 void updateMotorTranslation(struct melty_parameters_t* params, unsigned long time_spent_us) {
   if (params->rotation_interval_us == 0 || params->throttle_percent == 0) {
-    setESCDShot(0);
+    setESCThrottle(0);
     return;
   }
   
   if (current_rpm < MELTYBRAIN_RPM_THRESHOLD || params->max_throttle_offset == 0) {
-    setESCDShot(currentThrottle);
+    setESCThrottle(currentThrottle);
     return;
   }
   
@@ -652,7 +664,7 @@ void updateMotorTranslation(struct melty_parameters_t* params, unsigned long tim
   
   if (final_throttle < 0) final_throttle = 0;
   if (final_throttle > 1.0) final_throttle = 1.0;
-  setESCDShot((uint16_t)(final_throttle * 100));
+  setESCThrottle((uint16_t)(final_throttle * 100));
 }
 
 /**
@@ -661,7 +673,7 @@ void updateMotorTranslation(struct melty_parameters_t* params, unsigned long tim
  */
 void spin_one_rotation() {
   if (!accelEnabled) {
-    setESCDShot(currentThrottle);
+    setESCThrottle(currentThrottle);
     if (configMode && !showCalibrationFlash) {
       leds.setColor(LED_COLOR_CONFIG_MODE);
     } else {
@@ -692,7 +704,7 @@ void spin_one_rotation() {
   
   // Exit early if not rotating or too slow
   if (!isRotating || melty_params.rotation_interval_us > MAX_TRANSLATION_ROTATION_INTERVAL_US || melty_params.rotation_interval_us == 0) {
-    setESCDShot(currentThrottle);
+    setESCThrottle(currentThrottle);
     if (configMode && !showCalibrationFlash) {
       leds.setColor(LED_COLOR_CONFIG_MODE);
     } else if (current_rpm >= MELTYBRAIN_RPM_THRESHOLD && melty_params.rotation_interval_us > 0) {
@@ -704,7 +716,7 @@ void spin_one_rotation() {
   }
   
   if (melty_params.rotation_interval_us > 1000000) {
-    setESCDShot(currentThrottle);
+    setESCThrottle(currentThrottle);
     leds.setColor((configMode && !showCalibrationFlash) ? LED_COLOR_CONFIG_MODE : LED_COLOR_READY);
     return;
   }
@@ -730,7 +742,7 @@ void spin_one_rotation() {
     
     // Exit conditions
     if (currentThrottle == 0) {
-      setESCDShot(0);
+      setESCThrottle(0);
       leds.setColor((configMode && !showCalibrationFlash) ? LED_COLOR_CONFIG_MODE : LED_COLOR_READY);
       break;
     }
@@ -739,7 +751,7 @@ void spin_one_rotation() {
                         (myController == nullptr) || 
                         (myController != nullptr && !myController->isConnected());
     if (disconnected) {
-      setESCDShot(0);
+      setESCThrottle(0);
       leds.setColor(LED_COLOR_DISCONNECTED);
       break;
     }
@@ -750,7 +762,7 @@ void spin_one_rotation() {
       parameters_updated = true;
       
       if (currentThrottle == 0 || melty_params.rotation_interval_us > 1000000 || melty_params.rotation_interval_us == 0) {
-        setESCDShot(currentThrottle);
+        setESCThrottle(currentThrottle);
         break;
       }
     }
