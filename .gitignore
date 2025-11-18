@@ -1,0 +1,11 @@
+# Ignore everything in the repository root
+
+
+# EXCEPT for the .gitignore file itself
+!.gitignore
+
+# EXCEPT for the README file at the root
+!README.md
+
+# EXCEPT for the crueller_cruller directory
+!/crueller_cruller/
