@@ -271,23 +271,11 @@ uint16_t DShotRMT::parseRmtPaket(const dshot_packet_t &dshot_packet)
 }
 
 // Output using ESP32 RMT
+// RMT output implementation - direct hardware control
+// RMT hardware handles queuing - always send, don't skip
 void DShotRMT::sendRmtPaket(const dshot_packet_t &dshot_packet)
 {
     buildTxRmtItem(parseRmtPaket(dshot_packet));
-
-    // Check if RMT channel is ready (non-blocking)
-    // If not ready, skip this send to prevent errors
-    // Error 1119 = ESP_ERR_INVALID_STATE (RMT channel busy)
-    esp_err_t wait_result = rmt_wait_tx_done(dshot_tx_rmt_config.channel, 0);  // 0 = non-blocking check
-    
-    // Only send if channel is ready (previous transmission complete)
-    // ESP_OK = transmission complete, ready to send
-    // ESP_ERR_TIMEOUT (with timeout=0) = still busy, skip this send
-    // ESP_ERR_INVALID_STATE = error, skip this send
-    if (wait_result == ESP_OK) {
-        // Channel is ready - safe to send
-        rmt_write_items(dshot_tx_rmt_config.channel, dshot_tx_rmt_item, DSHOT_PACKET_LENGTH, false);
-    }
-    // Otherwise (busy or error), skip this send - RMT will catch up on next call
+    rmt_write_items(dshot_tx_rmt_config.channel, dshot_tx_rmt_item, DSHOT_PACKET_LENGTH, false);
 }
 
